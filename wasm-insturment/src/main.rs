@@ -1,17 +1,26 @@
 // Import necessary libraries
-use std::fs;
 use regex::Regex;
+use std::fs;
 
 fn main() {
-    // Define the import instructions for WebAssembly functions
-    let import_instructions = r#"
-(import "dylibso_observe" "instrument_enter" (func $instrument_enter (type $t0)))
-(import "dylibso_observe" "instrument_exit" (func $instrument_exit (type $t0)))
-(import "dylibso_observe" "instrument_memory_grow" (func $instrument_memory_grow (type $t0)))
-"#;
-
     // Read the original Wat file
     let wat_content = fs::read_to_string("original.wat").expect("Failed to read the Wat file");
+
+    let pattern = r#"\(type\s\$(\w+)\s\(func\s\(param(\s(\w+))+\)(\s\(result\s(\w)+\))?\)\)"#;
+    let type_defs: Vec<_> = Regex::new(pattern)
+        .unwrap()
+        .find_iter(&wat_content)
+        .collect();
+
+    // Define the import instructions for WebAssembly functions
+    let import_instructions = format!(
+        r#"
+    (type $t{0} (func (param i32)))
+    (import "" "instrument_enter" (func $instrument_enter (type $t{0})))
+    (import "" "instrument_exit" (func $instrument_exit (type $t{0})))
+    "#,
+        type_defs.len()
+    );
 
     // Define a regular expression pattern to match the start of the first function
     let function_pattern = r#"\(func \$\w+"#;
@@ -32,8 +41,19 @@ fn main() {
             &wat_content[insertion_position..]
         );
 
+        //Remove \(export (\w+)\) from already exisiting fucntions.
+        let pattern = r#"(\(func \$(\w+)\s)(\(export "[^"]+"\)\s)(\(type\s\$(\w+)\)\s(\(param\s\$(\w+)\s(\w+)\)\s)*(\(result\s(\w+)\))?)"#;
+
+        // Create a regex object and replace the matching part with a modified function definition
+        let re = Regex::new(pattern).unwrap();
+        let wat_content_with_imports = re.replace_all(&wat_content_with_imports, |caps: &regex::Captures| {
+            let function_name = caps.get(1).unwrap().as_str().trim();
+            let function_contents = caps.get(4).unwrap().as_str().trim();
+            format!("{} {}", function_name, function_contents)
+        });
+
         // Define a regular expression pattern to match function definitions
-        let pattern = r#"\(func\s\$(?<name>\w+)\s\(export\s"(\w+)"\)\s\(type\s\$(?<type>\w+)\)\s(\(param\s\$(?<param_type_name>\w+)\s(?<param_type>\w+)\)\s)*(\(result\s(?<return_type>\w+)\))?"#;
+        let pattern = r#"\(func\s\$(?<name>\w+)\s\(type\s\$(?<type>\w+)\)\s(\(param\s\$(?<param_type_name>\w+)\s(?<param_type>\w+)\)\s)*(\(result\s(?<return_type>\w+)\))?"#;
 
         // Create a regex object
         let re = Regex::new(pattern).unwrap();
@@ -61,7 +81,11 @@ fn main() {
 
             // Iterate over parameter matches and capture groups
             for param_caps in param_re.captures_iter(&matched_str) {
-                let param_type_name = param_caps.name("param_type_name").unwrap().as_str().to_string();
+                let param_type_name = param_caps
+                    .name("param_type_name")
+                    .unwrap()
+                    .as_str()
+                    .to_string();
                 let param_type = param_caps.name("param_type").unwrap().as_str().to_string();
 
                 params_list.push(WatFunctionParam {
@@ -133,32 +157,25 @@ fn main() {
             );
 
             instrumented_function.push_str(&function_body_end_string);
+            instrumented_function.push('\n');
 
             // Add the instrumented function to the vector
             instrumented_functions.push(instrumented_function);
         }
 
-        // Define a pattern to match the last function in the Wat content
-        let pattern = r#"(\(func\s\$(\w+)\s\(export\s"(\w+)"\)\s\(type\s\$(\w+)\)\s\(param\s\$(\w+)\s(\w+)\)\s\(param\s\$(\w+)\s(\w+)\)\s\(result\s(\w+)\))[a-zA-Z0-9\s\(\)\$_\.]+\)\)"#;
+        // Define a pattern to match the (table ...) declaration in the Wat content.
+        let pattern = r#"\(table\s\$(\w+)\s(\d+)\s(\d+)\sfuncref\)"#;
         let re = Regex::new(pattern).unwrap();
 
-        // Find all function matches in the Wat content
-        let matches: Vec<_> = re.find_iter(&wat_content_with_imports).collect();
+        // Find the (table ...) declaration in the Wat content
+        let table_start_position = re.find(&wat_content_with_imports).unwrap().start();
         let mut wat_code_with_new_functions = wat_content_with_imports.to_string();
 
-        if let Some(last_function_match) = matches.last() {
-            // Get the end position of the last function match
-            let end_position = last_function_match.end();
-
-            // Insert each new instrumented function after the last function
-            for new_function in instrumented_functions {
-                wat_code_with_new_functions.insert_str(end_position, &new_function);
-            }
+        for new_function in instrumented_functions {
+            wat_code_with_new_functions.insert_str(table_start_position, &new_function);
         }
 
-        // Write the modified Wat content to a new file
-        fs::write("modified.wat", wat_code_with_new_functions)
-            .expect("Failed to write the modified Wat file");
+        fs::write("modified.wat", wat_code_with_new_functions).unwrap();
 
         println!("Import instructions added successfully to modified.wat");
     } else {
@@ -182,5 +199,3 @@ struct WatFunctionParam {
     param_type_name: String,
     param_type: String,
 }
-
- 
