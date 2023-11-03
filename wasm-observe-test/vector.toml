@@ -1,0 +1,18 @@
+[sources.my_source_id]
+type = "file"
+include = [ "/home/wmu2kor/RustProjects/Market-place-for-security-work-loads-using-web-assembly/wasm-observe-test/log.txt" ]
+
+[sinks.my_sink_id]
+type = "aws_cloudwatch_logs"
+inputs = [ "my_source_id" ]
+compression = "none"
+create_missing_group = true
+create_missing_stream = true
+region = "us-east-1"
+group_name = "WasmLogs"
+stream_name = "FunctionLogs"
+encoding.codec = "json"
+
+[sinks.my_sink_id.auth]
+credentials_file = "/home/wmu2kor/.aws/credentials"
+
