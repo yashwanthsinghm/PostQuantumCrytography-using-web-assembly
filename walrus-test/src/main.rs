@@ -45,7 +45,6 @@ fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    println!("{:?}", function_names);
 
     for function_name in function_names {
         let function_id = module.funcs.by_name(&function_name).unwrap();
@@ -74,7 +73,7 @@ fn main() -> anyhow::Result<()> {
         instrumented_fucntion
             .name(format!("instrument_exp_{}", function_name))
             .func_body()
-            .i32_const(function.id().index() as i32)
+            .i32_const((function.id().index() + 4) as i32)
             .call(instrument_enter_function_id);
 
         //Call original function
@@ -84,15 +83,20 @@ fn main() -> anyhow::Result<()> {
 
         instrumented_fucntion.func_body().call(function_id);
 
-        for results in function_results {
+        for results in function_results.clone() {
             instrumented_fucntion.func_body().local_set(results);
         }
         
         //Call instrument_exit
         instrumented_fucntion
             .func_body()
-            .i32_const(function.id().index() as i32)
+            .i32_const((function.id().index()+4) as i32)
             .call(instrument_exit_function_id);
+
+        //Return results
+        for results in function_results.clone(){
+            instrumented_fucntion.func_body().local_get(results);
+        }
 
         let instrumented_fucntion =
             instrumented_fucntion.finish(function_params, &mut module.funcs);
